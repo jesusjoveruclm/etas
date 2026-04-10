@@ -1111,13 +1111,13 @@ def simulate_catalog_continuation(
     timewindow_length = to_days(simulation_end - auxiliary_start)
 
     while True:
-        logger.debug(f"generation {generation}")
+        logger.info(f"generation {generation}")
         sources = catalog.query(
             "generation == @generation and n_aftershocks > 0"
         ).copy()
 
         # if no aftershocks are produced by events of this generation, stop
-        logger.debug(
+        logger.info(
             f"number of events with aftershocks: {len(sources.index)}")
         if len(sources.index) == 0:
             break
@@ -1255,6 +1255,14 @@ class ETASSimulation:
             f"{len(self.catalog)} -- "
             f"{len(self.source_events)}"
         )
+
+        # Include events beyond the original training window (not in
+        # source_events) so they can act as sources during simulation.
+        extra_events = self.inversion_params.catalog[
+            ~self.inversion_params.catalog.index.isin(self.source_events.index)
+        ][["latitude", "longitude", "time", "magnitude"]].copy()
+        extra_events["xi_plus_1"] = 1
+        self.catalog = pd.concat([self.catalog, extra_events])
 
         np.testing.assert_allclose(
             self.catalog.magnitude.min(),
