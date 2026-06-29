@@ -1166,7 +1166,8 @@ class ETASSimulation:
             filter_polygon: bool = True,
             chunksize: int = 100,
             info_cols: list = ["is_background"],
-            i_start: int = 0):
+            i_start: int = 0,
+            use_list_chunks: bool = True):
         start = dt.datetime.now()
         np.random.seed()
         logger.debug("induced info: {}".format(self.induced))
@@ -1185,6 +1186,7 @@ class ETASSimulation:
             days=forecast_n_days
         )
 
+        simulations = pd.DataFrame()
         simulation_chunks = []
         for sim_id in np.arange(i_start, n_simulations):
             continuation = simulate_catalog_continuation(
@@ -1222,11 +1224,16 @@ class ETASSimulation:
             )
 
             continuation["catalog_id"] = sim_id
-            simulation_chunks.append(continuation)
+            if use_list_chunks:
+                simulation_chunks.append(continuation)
+            else:
+                simulations = pd.concat(
+                    [simulations, continuation], ignore_index=False)
 
             if sim_id % chunksize == 0 or sim_id == n_simulations - 1:
-                simulations = pd.concat(
-                    simulation_chunks, ignore_index=False)
+                if use_list_chunks:
+                    simulations = pd.concat(
+                        simulation_chunks, ignore_index=False)
                 simulations.query(
                     "time>=@self.forecast_start_date and "
                     "time<=@self.forecast_end_date and "
@@ -1258,6 +1265,7 @@ class ETASSimulation:
 
                 yield simulations[cols]
 
+                simulations = pd.DataFrame()
                 simulation_chunks = []
         self.logger.info("DONE simulating!")
 
@@ -1271,6 +1279,7 @@ class ETASSimulation:
         chunksize: int = 100,
         info_cols: list = [],
         i_start: int = 0,
+        use_list_chunks: bool = True,
     ) -> None:
         i_end = i_start + n_simulations
 
@@ -1286,6 +1295,7 @@ class ETASSimulation:
                 chunksize,
                 info_cols,
                 i_start=i_start,
+                use_list_chunks=use_list_chunks,
             )
 
             next(generator).to_csv(fn_store, mode="w", header=True, index=True)
@@ -1332,6 +1342,7 @@ class ETASSimulation:
                     chunksize,
                     info_cols,
                     i_start=i_next,
+                    use_list_chunks=use_list_chunks,
                 )
 
         # append rest of chunks to file
@@ -1346,6 +1357,7 @@ class ETASSimulation:
         filter_polygon: bool = True,
         chunksize: int = 100,
         info_cols: list = [],
+        use_list_chunks: bool = True,
     ) -> ForecastCatalog:
         store = pd.DataFrame()
         for chunk in self.simulate(
@@ -1355,6 +1367,7 @@ class ETASSimulation:
             filter_polygon,
             chunksize,
             info_cols,
+            use_list_chunks=use_list_chunks,
         ):
             store = pd.concat([store, chunk], ignore_index=False)
         return ForecastCatalog(data=store)
