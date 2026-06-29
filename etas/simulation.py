@@ -1185,7 +1185,7 @@ class ETASSimulation:
             days=forecast_n_days
         )
 
-        simulations = pd.DataFrame()
+        simulation_chunks = []
         for sim_id in np.arange(i_start, n_simulations):
             continuation = simulate_catalog_continuation(
                 self.catalog,
@@ -1222,10 +1222,11 @@ class ETASSimulation:
             )
 
             continuation["catalog_id"] = sim_id
-            simulations = pd.concat(
-                [simulations, continuation], ignore_index=False)
+            simulation_chunks.append(continuation)
 
             if sim_id % chunksize == 0 or sim_id == n_simulations - 1:
+                simulations = pd.concat(
+                    simulation_chunks, ignore_index=False)
                 simulations.query(
                     "time>=@self.forecast_start_date and "
                     "time<=@self.forecast_end_date and "
@@ -1257,7 +1258,7 @@ class ETASSimulation:
 
                 yield simulations[cols]
 
-                simulations = pd.DataFrame()
+                simulation_chunks = []
         self.logger.info("DONE simulating!")
 
     def simulate_to_csv(
