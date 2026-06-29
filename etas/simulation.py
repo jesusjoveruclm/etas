@@ -33,6 +33,16 @@ from etas.mc_b_est import simulate_magnitudes, simulate_magnitudes_from_zone
 logger = logging.getLogger(__name__)
 
 
+def _rng_from_seed(seed=None):
+    return np.random.default_rng(seed)
+
+
+def _rng_for_catalog(seed, catalog_id):
+    if seed is None:
+        return _rng_from_seed()
+    return _rng_from_seed(np.random.SeedSequence([seed, int(catalog_id)]))
+
+
 def bin_to_precision(x: np.ndarray | list, delta_x: float = 0.1) -> np.ndarray:
     """
     Rounds a float number x to a given precision. If precision not given,
@@ -226,7 +236,9 @@ def parameters_from_etes_formulation(etes_par, par, delta_m_ref=0):
     return result
 
 
-def simulate_aftershock_time(log10_c, omega, log10_tau, size=1):
+def simulate_aftershock_time(log10_c, omega, log10_tau, size=1, rng=None):
+    if rng is None:
+        rng = _rng_from_seed()
     # time delay in days
 
     # this function makes sense. I have panicked and checked several times.
@@ -235,7 +247,7 @@ def simulate_aftershock_time(log10_c, omega, log10_tau, size=1):
 
     c = np.power(10, log10_c)
     tau = np.power(10, log10_tau)
-    y = np.random.uniform(size=size)
+    y = rng.uniform(size=size)
 
     return (
         inverse_upper_gamma_ext(-omega, (1 - y)
@@ -245,14 +257,16 @@ def simulate_aftershock_time(log10_c, omega, log10_tau, size=1):
     )
 
 
-def simulate_aftershock_time_untapered(log10_c, omega, size=1):
+def simulate_aftershock_time_untapered(log10_c, omega, size=1, rng=None):
+    if rng is None:
+        rng = _rng_from_seed()
     # time delay in days
 
     # TODO: find a way to sample y values with higher precision that 1e-15
     # otherwise there is a maximum time delay that will be sampled...
 
     c = np.power(10, log10_c)
-    y = np.random.uniform(size=size)
+    y = rng.uniform(size=size)
 
     return np.power((1 - y), -1 / omega) * c - c
 
@@ -271,22 +285,27 @@ def inv_time_cdf_approx(p, c, tau, omega):
     return np.where(p < tau, res_a, res_b)
 
 
-def simulate_aftershock_time_approx(log10_c, omega, log10_tau, size=1):
+def simulate_aftershock_time_approx(log10_c, omega, log10_tau, size=1,
+                                    rng=None):
+    if rng is None:
+        rng = _rng_from_seed()
     # time delay in days
     c = np.power(10, log10_c)
     tau = np.power(10, log10_tau)
-    y = np.random.uniform(size=size)
+    y = rng.uniform(size=size)
 
     return inv_time_cdf_approx(y, c, tau, omega)
 
 
-def simulate_aftershock_place(log10_d, gamma, rho, mi, mc):
+def simulate_aftershock_place(log10_d, gamma, rho, mi, mc, rng=None):
+    if rng is None:
+        rng = _rng_from_seed()
     # x and y offset in km
     d = np.power(10, log10_d)
     d_g = d * np.exp(gamma * (mi - mc))
-    y_r = np.random.uniform(size=len(mi))
+    y_r = rng.uniform(size=len(mi))
     r = np.sqrt(np.power(1 - y_r, -1 / rho) * d_g - d_g)
-    phi = np.random.uniform(0, 2 * np.pi, size=len(mi))
+    phi = rng.uniform(0, 2 * np.pi, size=len(mi))
 
     x = r * np.sin(phi)
     y = r * np.cos(phi)
@@ -294,11 +313,13 @@ def simulate_aftershock_place(log10_d, gamma, rho, mi, mc):
     return x, y
 
 
-def simulate_aftershock_radius(log10_d, gamma, rho, mi, mc):
+def simulate_aftershock_radius(log10_d, gamma, rho, mi, mc, rng=None):
+    if rng is None:
+        rng = _rng_from_seed()
     # x and y offset in km
     d = np.power(10, log10_d)
     d_g = d * np.exp(gamma * (mi - mc))
-    y_r = np.random.uniform(size=len(mi))
+    y_r = rng.uniform(size=len(mi))
     r = np.sqrt(np.power(1 - y_r, -1 / rho) * d_g - d_g)
 
     return r
@@ -313,31 +334,32 @@ def simulate_background_location(
     bsla=None,
     bslo=None,
     n=1,
+    rng=None,
 ):
-    np.random.seed()
+    if rng is None:
+        rng = _rng_from_seed()
     assert np.max(background_probs) <= 1, "background_probs cannot exceed 1"
 
     keep_idxs = []
     while sum(keep_idxs) == 0:
-        keep_idxs = background_probs >= np.random.uniform(
+        keep_idxs = background_probs >= rng.uniform(
             size=len(background_probs))
 
     sample_lats = latitudes[keep_idxs]
     sample_lons = longitudes[keep_idxs]
 
-    choices = np.floor(np.random.uniform(
-        0, len(sample_lats), size=n)).astype(int)
+    choices = np.floor(rng.uniform(0, len(sample_lats), size=n)).astype(int)
 
     if grid:
         lats = sample_lats.iloc[choices] + \
-            np.random.uniform(0, bsla, size=n) - bsla / 2
+            rng.uniform(0, bsla, size=n) - bsla / 2
         lons = sample_lons.iloc[choices] + \
-            np.random.uniform(0, bslo, size=n) - bslo / 2
+            rng.uniform(0, bslo, size=n) - bslo / 2
     else:
         lats = sample_lats.iloc[choices] + \
-            np.random.normal(loc=0, scale=scale, size=n)
+            rng.normal(loc=0, scale=scale, size=n)
         lons = sample_lons.iloc[choices] + \
-            np.random.normal(loc=0, scale=scale, size=n)
+            rng.normal(loc=0, scale=scale, size=n)
 
     return lats, lons
 
@@ -360,7 +382,10 @@ def generate_background_events(
     grid=False,
     mfd_zones=None,
     zones_from_latlon=None,
+    rng=None,
 ):
+    if rng is None:
+        rng = _rng_from_seed()
     from etas.inversion import polygon_surface, to_days
 
     theta = parameter_dict2array(parameters)
@@ -384,7 +409,7 @@ def generate_background_events(
     expected_n_background = (
         np.power(10, parameters["log10_mu"]) * area * timewindow_length
     )
-    n_background = np.random.poisson(lam=expected_n_background)
+    n_background = rng.poisson(lam=expected_n_background)
 
     # generate too many events, afterwards filter those that are in the polygon
     n_generate = int(np.round(n_background * rectangle_area / area * 1.2))
@@ -413,11 +438,12 @@ def generate_background_events(
                                          bslo=bslo,
                                          grid=grid,
                                          n=n_generate,
+                                         rng=rng,
                                          )
     else:
-        catalog["latitude"] = np.random.uniform(
+        catalog["latitude"] = rng.uniform(
             min_lat, max_lat, size=n_generate)
-        catalog["longitude"] = np.random.uniform(
+        catalog["longitude"] = rng.uniform(
             min_lon, max_lon, size=n_generate)
 
     catalog = gpd.GeoDataFrame(
@@ -444,9 +470,9 @@ def generate_background_events(
         )
 
         # generate lat, long
-        catalog["latitude"] = np.random.uniform(
+        catalog["latitude"] = rng.uniform(
             min_lat, max_lat, size=n_generate)
-        catalog["longitude"] = np.random.uniform(
+        catalog["longitude"] = rng.uniform(
             min_lon, max_lon, size=n_generate)
 
         catalog = gpd.GeoDataFrame(
@@ -458,18 +484,20 @@ def generate_background_events(
     # generate time, magnitude
     catalog["time"] = [
         timewindow_start + dt.timedelta(days=d)
-        for d in np.random.uniform(0, timewindow_length, size=n_background)
+        for d in rng.uniform(0, timewindow_length, size=n_background)
     ]
 
     if mfd_zones is not None:
         zones = zones_from_latlon(catalog["latitude"], catalog["longitude"])
-        catalog["magnitude"] = simulate_magnitudes_from_zone(zones, mfd_zones)
+        catalog["magnitude"] = simulate_magnitudes_from_zone(
+            zones, mfd_zones, rng=rng)
     else:
         catalog["magnitude"] = simulate_magnitudes(
             n_background,
             beta=beta,
             mc=mc - delta_m / 2,
             m_max=m_max + delta_m / 2 if m_max is not None else None,
+            rng=rng,
         )
 
     # info about origin of event
@@ -490,7 +518,7 @@ def generate_background_events(
         no_end=True,
         # axis=1
     )
-    catalog["n_aftershocks"] = np.random.poisson(
+    catalog["n_aftershocks"] = rng.poisson(
         lam=catalog["expected_n_aftershocks"])
 
     return catalog.drop("geometry", axis=1)
@@ -512,7 +540,10 @@ def generate_aftershocks(
     approx_times=False,
     mfd_zones=None,
     zones_from_latlon=None,
+    rng=None,
 ):
+    if rng is None:
+        rng = _rng_from_seed()
     theta = parameter_dict2array(parameters)
     theta_without_mu = theta[2:]
 
@@ -524,6 +555,7 @@ def generate_aftershocks(
             log10_c=parameters["log10_c"],
             omega=parameters["omega"],
             size=total_n_aftershocks,
+            rng=rng,
         )
     elif approx_times:
         all_deltas = simulate_aftershock_time_approx(
@@ -531,6 +563,7 @@ def generate_aftershocks(
             omega=parameters["omega"],
             log10_tau=parameters["log10_tau"],
             size=total_n_aftershocks,
+            rng=rng,
         )
     else:
         all_deltas = simulate_aftershock_time(
@@ -538,6 +571,7 @@ def generate_aftershocks(
             omega=parameters["omega"],
             log10_tau=parameters["log10_tau"],
             size=total_n_aftershocks,
+            rng=rng,
         )
 
     aftershocks = sources.loc[sources.index.repeat(sources.n_aftershocks)]
@@ -569,8 +603,9 @@ def generate_aftershocks(
         parameters["rho"],
         aftershocks["parent_magnitude"],
         mc=mc,
+        rng=rng,
     )
-    aftershocks["angle"] = np.random.uniform(
+    aftershocks["angle"] = rng.uniform(
         0, 2 * np.pi, size=len(aftershocks))
     aftershocks["degree_lon"] = haversine(
         np.radians(aftershocks["parent_latitude"]),
@@ -612,13 +647,15 @@ def generate_aftershocks(
     n_total_aftershocks = len(aadf.index)
     if mfd_zones is not None:
         zones = zones_from_latlon(aadf["latitude"], aadf["longitude"])
-        aadf["magnitude"] = simulate_magnitudes_from_zone(zones, mfd_zones)
+        aadf["magnitude"] = simulate_magnitudes_from_zone(
+            zones, mfd_zones, rng=rng)
     else:
         aadf["magnitude"] = simulate_magnitudes(
             n_total_aftershocks,
             beta=beta,
             mc=mc - delta_m / 2,
             m_max=m_max + delta_m / 2 if m_max is not None else None,
+            rng=rng,
         )
 
     # info about generation and being background
@@ -632,13 +669,16 @@ def generate_aftershocks(
         no_start=True,
         no_end=True,
     )
-    aadf["n_aftershocks"] = np.random.poisson(
+    aadf["n_aftershocks"] = rng.poisson(
         lam=aadf["expected_n_aftershocks"])
 
     return aadf
 
 
-def prepare_auxiliary_catalog(auxiliary_catalog, parameters, mc, delta_m=0):
+def prepare_auxiliary_catalog(auxiliary_catalog, parameters, mc, delta_m=0,
+                              rng=None):
+    if rng is None:
+        rng = _rng_from_seed()
     theta = parameter_dict2array(parameters)
     theta_without_mu = theta[2:]
 
@@ -666,10 +706,8 @@ def prepare_auxiliary_catalog(auxiliary_catalog, parameters, mc, delta_m=0):
         catalog["expected_n_aftershocks"] * catalog["xi_plus_1"]
     )
 
-    catalog["n_aftershocks"] = catalog["expected_n_aftershocks"].apply(
-        np.random.poisson,
-        # axis = 1
-    )
+    catalog["n_aftershocks"] = rng.poisson(
+        lam=catalog["expected_n_aftershocks"])
 
     return catalog
 
@@ -689,6 +727,7 @@ def generate_catalog(
     background_probs=None,
     gaussian_scale=None,
     approx_times=False,
+    rng=None,
 ):
     """
     Simulates an earthquake catalog.
@@ -731,10 +770,14 @@ def generate_catalog(
     approx_times : bool, optional
         if True, times are simulated using an approximation,
         making it much faster.
+    rng : numpy.random.Generator, optional
+        Random number generator used for reproducible simulation.
     """
 
     if beta_aftershock is None:
         beta_aftershock = beta_main
+    if rng is None:
+        rng = _rng_from_seed()
 
     # generate background events
     logger.info("generating background events..")
@@ -751,6 +794,7 @@ def generate_catalog(
         background_lons=background_lons,
         background_probs=background_probs,
         gaussian_scale=gaussian_scale,
+        rng=rng,
     )
 
     theta = parameter_dict2array(parameters)
@@ -791,6 +835,7 @@ def generate_catalog(
             timewindow_end=timewindow_end,
             timewindow_length=timewindow_length,
             approx_times=approx_times,
+            rng=rng,
         )
 
         aftershocks.index += catalog.index.max() + 1
@@ -843,6 +888,7 @@ def simulate_catalog_continuation(
     induced_bsla=None,
     induced_bslo=None,
     n_induced=None,
+    rng=None,
 ):
     """
     auxiliary_catalog : pd.DataFrame
@@ -903,10 +949,14 @@ def simulate_catalog_continuation(
         Longitude bin size of induced grid term.
     n_induced : float, optional
         Expected number of induced earthquakes.
+    rng : numpy.random.Generator, optional
+        Random number generator used for reproducible simulation.
     """
     # preparing betas
     if beta_aftershock is None:
         beta_aftershock = beta_main
+    if rng is None:
+        rng = _rng_from_seed()
 
     background = generate_background_events(
         polygon,
@@ -926,6 +976,7 @@ def simulate_catalog_continuation(
         grid=bg_grid,
         mfd_zones=mfd_zones,
         zones_from_latlon=zones_from_latlon,
+        rng=rng,
     )
     background["evt_id"] = ""
     background["xi_plus_1"] = 1
@@ -953,6 +1004,7 @@ def simulate_catalog_continuation(
             bsla=induced_bsla,
             bslo=induced_bslo,
             grid=True,
+            rng=rng,
         )
         induced["is_background"] = "induced"
         induced["evt_id"] = ""
@@ -965,6 +1017,7 @@ def simulate_catalog_continuation(
         parameters=parameters,
         mc=mc,
         delta_m=delta_m,
+        rng=rng,
     )
     background.index += auxiliary_catalog.index.max() + 1
     background["evt_id"] = background.index.values
@@ -1009,6 +1062,7 @@ def simulate_catalog_continuation(
             approx_times=approx_times,
             mfd_zones=mfd_zones,
             zones_from_latlon=zones_from_latlon,
+            rng=rng,
         )
 
         aftershocks.index += catalog.index.max() + 1
@@ -1166,9 +1220,9 @@ class ETASSimulation:
             filter_polygon: bool = True,
             chunksize: int = 100,
             info_cols: list = ["is_background"],
-            i_start: int = 0):
+            i_start: int = 0,
+            seed: int = None):
         start = dt.datetime.now()
-        np.random.seed()
         logger.debug("induced info: {}".format(self.induced))
 
         if m_threshold is None:
@@ -1187,6 +1241,7 @@ class ETASSimulation:
 
         simulations = pd.DataFrame()
         for sim_id in np.arange(i_start, n_simulations):
+            rng = _rng_for_catalog(seed, sim_id)
             continuation = simulate_catalog_continuation(
                 self.catalog,
                 auxiliary_start=self.inversion_params.auxiliary_start,
@@ -1219,6 +1274,7 @@ class ETASSimulation:
                 induced_bsla=self.induced_bsla,
                 induced_bslo=self.induced_bslo,
                 n_induced=self.n_induced,
+                rng=rng,
             )
 
             continuation["catalog_id"] = sim_id
@@ -1270,6 +1326,7 @@ class ETASSimulation:
         chunksize: int = 100,
         info_cols: list = [],
         i_start: int = 0,
+        seed: int = None,
     ) -> None:
         i_end = i_start + n_simulations
 
@@ -1285,6 +1342,7 @@ class ETASSimulation:
                 chunksize,
                 info_cols,
                 i_start=i_start,
+                seed=seed,
             )
 
             next(generator).to_csv(fn_store, mode="w", header=True, index=True)
@@ -1331,6 +1389,7 @@ class ETASSimulation:
                     chunksize,
                     info_cols,
                     i_start=i_next,
+                    seed=seed,
                 )
 
         # append rest of chunks to file
@@ -1345,6 +1404,7 @@ class ETASSimulation:
         filter_polygon: bool = True,
         chunksize: int = 100,
         info_cols: list = [],
+        seed: int = None,
     ) -> ForecastCatalog:
         store = pd.DataFrame()
         for chunk in self.simulate(
@@ -1354,6 +1414,7 @@ class ETASSimulation:
             filter_polygon,
             chunksize,
             info_cols,
+            seed=seed,
         ):
             store = pd.concat([store, chunk], ignore_index=False)
         return ForecastCatalog(data=store)
