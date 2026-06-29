@@ -342,6 +342,33 @@ def simulate_background_location(
     return lats, lons
 
 
+def prepare_area_properties(polygon, timewindow_start, timewindow_end):
+    from etas.inversion import polygon_surface, to_days
+
+    area = polygon_surface(polygon)
+    timewindow_length = to_days(timewindow_end - timewindow_start)
+
+    min_lat, min_lon, max_lat, max_lon = polygon.bounds
+    coords = [
+        [min_lat, min_lon],
+        [max_lat, min_lon],
+        [max_lat, max_lon],
+        [min_lat, max_lon],
+    ]
+    rectangle = Polygon(coords)
+    rectangle_area = polygon_surface(rectangle)
+
+    return {
+        "area": area,
+        "timewindow_length": timewindow_length,
+        "min_lat": min_lat,
+        "min_lon": min_lon,
+        "max_lat": max_lat,
+        "max_lon": max_lon,
+        "rectangle_area": rectangle_area,
+    }
+
+
 def generate_background_events(
     polygon,
     timewindow_start,
@@ -360,25 +387,22 @@ def generate_background_events(
     grid=False,
     mfd_zones=None,
     zones_from_latlon=None,
+    area_properties=None,
 ):
-    from etas.inversion import polygon_surface, to_days
-
     theta = parameter_dict2array(parameters)
     theta_without_mu = theta[2:]
 
-    area = polygon_surface(polygon)
-    timewindow_length = to_days(timewindow_end - timewindow_start)
+    if area_properties is None:
+        area_properties = prepare_area_properties(
+            polygon, timewindow_start, timewindow_end)
 
-    # area of surrounding rectangle
-    min_lat, min_lon, max_lat, max_lon = polygon.bounds
-    coords = [
-        [min_lat, min_lon],
-        [max_lat, min_lon],
-        [max_lat, max_lon],
-        [min_lat, max_lon],
-    ]
-    rectangle = Polygon(coords)
-    rectangle_area = polygon_surface(rectangle)
+    area = area_properties["area"]
+    timewindow_length = area_properties["timewindow_length"]
+    min_lat = area_properties["min_lat"]
+    min_lon = area_properties["min_lon"]
+    max_lat = area_properties["max_lat"]
+    max_lon = area_properties["max_lon"]
+    rectangle_area = area_properties["rectangle_area"]
 
     # number of background events
     expected_n_background = (
@@ -736,6 +760,9 @@ def generate_catalog(
     if beta_aftershock is None:
         beta_aftershock = beta_main
 
+    area_properties = prepare_area_properties(
+        polygon, timewindow_start, timewindow_end)
+
     # generate background events
     logger.info("generating background events..")
     catalog = generate_background_events(
@@ -751,6 +778,7 @@ def generate_catalog(
         background_lons=background_lons,
         background_probs=background_probs,
         gaussian_scale=gaussian_scale,
+        area_properties=area_properties,
     )
 
     theta = parameter_dict2array(parameters)
@@ -843,6 +871,7 @@ def simulate_catalog_continuation(
     induced_bsla=None,
     induced_bslo=None,
     n_induced=None,
+    area_properties=None,
 ):
     """
     auxiliary_catalog : pd.DataFrame
@@ -903,10 +932,17 @@ def simulate_catalog_continuation(
         Longitude bin size of induced grid term.
     n_induced : float, optional
         Expected number of induced earthquakes.
+    area_properties : dict, optional
+        Polygon area, bounds, rectangle area, and simulation duration prepared
+        outside the simulation loop.
     """
     # preparing betas
     if beta_aftershock is None:
         beta_aftershock = beta_main
+
+    if area_properties is None:
+        area_properties = prepare_area_properties(
+            polygon, auxiliary_end, simulation_end)
 
     background = generate_background_events(
         polygon,
@@ -926,16 +962,15 @@ def simulate_catalog_continuation(
         grid=bg_grid,
         mfd_zones=mfd_zones,
         zones_from_latlon=zones_from_latlon,
+        area_properties=area_properties,
     )
     background["evt_id"] = ""
     background["xi_plus_1"] = 1
 
     if induced_lats is not None:
-        from etas.inversion import polygon_surface
-
         parameters_induced = parameters.copy()
-        area = polygon_surface(polygon)
-        timewindow_length = to_days(simulation_end - auxiliary_end)
+        area = area_properties["area"]
+        timewindow_length = area_properties["timewindow_length"]
         mu_induced = n_induced / (timewindow_length * area)
         parameters_induced["log10_mu"] = np.log10(mu_induced)
         induced = generate_background_events(
@@ -953,6 +988,7 @@ def simulate_catalog_continuation(
             bsla=induced_bsla,
             bslo=induced_bslo,
             grid=True,
+            area_properties=area_properties,
         )
         induced["is_background"] = "induced"
         induced["evt_id"] = ""
@@ -1184,6 +1220,8 @@ class ETASSimulation:
         self.forecast_end_date = self.forecast_start_date + dt.timedelta(
             days=forecast_n_days
         )
+        area_properties = prepare_area_properties(
+            self.polygon, self.forecast_start_date, self.forecast_end_date)
 
         simulation_chunks = []
         for sim_id in np.arange(i_start, n_simulations):
@@ -1219,6 +1257,7 @@ class ETASSimulation:
                 induced_bsla=self.induced_bsla,
                 induced_bslo=self.induced_bslo,
                 n_induced=self.n_induced,
+                area_properties=area_properties,
             )
 
             continuation["catalog_id"] = sim_id
