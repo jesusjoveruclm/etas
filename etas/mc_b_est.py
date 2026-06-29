@@ -66,19 +66,23 @@ def estimate_beta_positive(magnitudes: np.ndarray, delta_m: float = 0
     return beta
 
 
-def simulate_magnitudes(n, beta, mc, m_max=None):
+def simulate_magnitudes(n, beta, mc, m_max=None, rng=None):
+    if rng is None:
+        rng = np.random.default_rng()
     if m_max is not None:
         norm_factor = (1 - np.exp(-beta * (m_max - mc)))
     else:
         norm_factor = 1
-    mags = np.random.uniform(size=n)
+    mags = rng.uniform(size=n)
     mags = (-1 * np.log(1 - norm_factor * mags) / beta) + mc
     return mags
 
 
-def simulate_magnitudes_from_zone(zones, mfds):
+def simulate_magnitudes_from_zone(zones, mfds, rng=None):
+    if rng is None:
+        rng = np.random.default_rng()
 
-    y = np.random.uniform(size=len(zones))
+    y = rng.uniform(size=len(zones))
     mags = (y <= mfds.loc[zones].T).idxmax()
     return mags.values
 
