@@ -15,6 +15,7 @@ import decimal
 import logging
 import os
 import pprint
+from concurrent.futures import ProcessPoolExecutor
 
 import geopandas as gpd
 import numpy as np
@@ -31,6 +32,96 @@ from etas.inversion import (ETASParameterCalculation, branching_integral,
 from etas.mc_b_est import simulate_magnitudes, simulate_magnitudes_from_zone
 
 logger = logging.getLogger(__name__)
+
+
+def _simulation_chunk_ranges(i_start, n_simulations, chunksize):
+    chunk_start = i_start
+    for sim_id in np.arange(i_start, n_simulations):
+        if sim_id % chunksize == 0 or sim_id == n_simulations - 1:
+            yield int(chunk_start), int(sim_id) + 1
+            chunk_start = int(sim_id) + 1
+
+
+def _postprocess_simulation_chunk(
+    simulations,
+    forecast_start_date,
+    forecast_end_date,
+    m_threshold,
+    delta_m,
+    polygon,
+    filter_polygon,
+    cols,
+):
+    simulations.query(
+        "time>=@forecast_start_date and "
+        "time<=@forecast_end_date and "
+        "magnitude>=@m_threshold-@delta_m/2",
+        inplace=True,
+    )
+    if delta_m > 0:
+        simulations.magnitude = bin_to_precision(simulations.magnitude,
+                                                 delta_m)
+    simulations.index.name = "id"
+
+    if filter_polygon:
+        simulations = gpd.GeoDataFrame(
+            simulations,
+            geometry=gpd.points_from_xy(
+                simulations.latitude, simulations.longitude
+            ),
+        )
+        simulations = simulations[simulations.intersects(polygon)]
+
+    return simulations[cols]
+
+
+def _simulate_catalog_chunk(args):
+    np.random.seed()
+    simulations = pd.DataFrame()
+    for sim_id in np.arange(args["sim_start"], args["sim_stop"]):
+        continuation = simulate_catalog_continuation(
+            args["catalog"],
+            auxiliary_start=args["auxiliary_start"],
+            auxiliary_end=args["forecast_start_date"],
+            polygon=args["polygon"],
+            simulation_end=args["forecast_end_date"],
+            parameters=args["parameters"],
+            mc=args["mc"],
+            m_max=args["m_max"],
+            beta_main=args["beta_main"],
+            background_lats=args["background_lats"],
+            background_lons=args["background_lons"],
+            background_probs=args["background_probs"],
+            bg_grid=args["bg_grid"],
+            bsla=args["bsla"],
+            bslo=args["bslo"],
+            gaussian_scale=args["gaussian_scale"],
+            filter_polygon=False,
+            approx_times=args["approx_times"],
+            mfd_zones=args["mfd_zones"],
+            zones_from_latlon=args["zones_from_latlon"],
+            induced_lats=args["induced_lats"],
+            induced_lons=args["induced_lons"],
+            induced_term=args["induced_term"],
+            induced_bsla=args["induced_bsla"],
+            induced_bslo=args["induced_bslo"],
+            n_induced=args["n_induced"],
+        )
+        continuation["catalog_id"] = sim_id
+        simulations = pd.concat(
+            [simulations, continuation], ignore_index=False)
+
+    chunk = _postprocess_simulation_chunk(
+        simulations,
+        args["forecast_start_date"],
+        args["forecast_end_date"],
+        args["m_threshold"],
+        args["delta_m"],
+        args["polygon"],
+        args["filter_polygon"],
+        args["cols"],
+    )
+    return args["sim_start"], args["sim_stop"], chunk
 
 
 def bin_to_precision(x: np.ndarray | list, delta_x: float = 0.1) -> np.ndarray:
@@ -1166,7 +1257,8 @@ class ETASSimulation:
             filter_polygon: bool = True,
             chunksize: int = 100,
             info_cols: list = ["is_background"],
-            i_start: int = 0):
+            i_start: int = 0,
+            workers: int = None):
         start = dt.datetime.now()
         np.random.seed()
         logger.debug("induced info: {}".format(self.induced))
@@ -1184,6 +1276,65 @@ class ETASSimulation:
         self.forecast_end_date = self.forecast_start_date + dt.timedelta(
             days=forecast_n_days
         )
+
+        if workers is not None and workers > 1:
+            worker_args = []
+            for sim_start, sim_stop in _simulation_chunk_ranges(
+                    i_start, n_simulations, chunksize):
+                worker_args.append({
+                    "sim_start": sim_start,
+                    "sim_stop": sim_stop,
+                    "catalog": self.catalog,
+                    "auxiliary_start": self.inversion_params.auxiliary_start,
+                    "forecast_start_date": self.forecast_start_date,
+                    "forecast_end_date": self.forecast_end_date,
+                    "polygon": self.polygon,
+                    "parameters": self.inversion_params.theta,
+                    "mc": (
+                        self.inversion_params.m_ref
+                        - self.inversion_params.delta_m / 2
+                    ),
+                    "m_max": (
+                        self.m_max + self.inversion_params.delta_m / 2
+                        if self.m_max is not None
+                        else None
+                    ),
+                    "beta_main": self.inversion_params.beta,
+                    "background_lats": self.background_lats,
+                    "background_lons": self.background_lons,
+                    "background_probs": self.background_probs,
+                    "bg_grid": self.bg_grid,
+                    "bsla": self.bsla,
+                    "bslo": self.bslo,
+                    "gaussian_scale": self.gaussian_scale,
+                    "filter_polygon": filter_polygon,
+                    "approx_times": self.approx_times,
+                    "mfd_zones": self.mfd_zones,
+                    "zones_from_latlon": self.zones_from_latlon,
+                    "induced_lats": self.induced_lats,
+                    "induced_lons": self.induced_lons,
+                    "induced_term": self.induced_term,
+                    "induced_bsla": self.induced_bsla,
+                    "induced_bslo": self.induced_bslo,
+                    "n_induced": self.n_induced,
+                    "m_threshold": m_threshold,
+                    "delta_m": self.inversion_params.delta_m,
+                    "cols": cols,
+                })
+
+            with ProcessPoolExecutor(max_workers=workers) as executor:
+                for sim_start, sim_stop, chunk in executor.map(
+                        _simulate_catalog_chunk, worker_args):
+                    self.logger.debug(
+                        "storing simulations up to {}".format(sim_stop - 1))
+                    self.logger.debug(
+                        f"took {dt.datetime.now() - start} to simulate "
+                        f"{sim_stop} catalogs."
+                    )
+                    yield chunk
+
+            self.logger.info("DONE simulating!")
+            return
 
         simulations = pd.DataFrame()
         for sim_id in np.arange(i_start, n_simulations):
@@ -1226,17 +1377,6 @@ class ETASSimulation:
                 [simulations, continuation], ignore_index=False)
 
             if sim_id % chunksize == 0 or sim_id == n_simulations - 1:
-                simulations.query(
-                    "time>=@self.forecast_start_date and "
-                    "time<=@self.forecast_end_date and "
-                    "magnitude>=@m_threshold-@self.inversion_params.delta_m/2",
-                    inplace=True,
-                )
-                if self.inversion_params.delta_m > 0:
-                    simulations.magnitude = bin_to_precision(
-                        simulations.magnitude, self.inversion_params.delta_m
-                    )
-                simulations.index.name = "id"
                 self.logger.debug(
                     "storing simulations up to {}".format(sim_id))
                 self.logger.debug(
@@ -1244,18 +1384,16 @@ class ETASSimulation:
                     f"{sim_id + 1} catalogs."
                 )
 
-                # now filter polygon
-                if filter_polygon:
-                    simulations = gpd.GeoDataFrame(
-                        simulations,
-                        geometry=gpd.points_from_xy(
-                            simulations.latitude, simulations.longitude
-                        ),
-                    )
-                    simulations = simulations[simulations.intersects(
-                        self.polygon)]
-
-                yield simulations[cols]
+                yield _postprocess_simulation_chunk(
+                    simulations,
+                    self.forecast_start_date,
+                    self.forecast_end_date,
+                    m_threshold,
+                    self.inversion_params.delta_m,
+                    self.polygon,
+                    filter_polygon,
+                    cols,
+                )
 
                 simulations = pd.DataFrame()
         self.logger.info("DONE simulating!")
@@ -1270,6 +1408,7 @@ class ETASSimulation:
         chunksize: int = 100,
         info_cols: list = [],
         i_start: int = 0,
+        workers: int = None,
     ) -> None:
         i_end = i_start + n_simulations
 
@@ -1285,6 +1424,7 @@ class ETASSimulation:
                 chunksize,
                 info_cols,
                 i_start=i_start,
+                workers=workers,
             )
 
             next(generator).to_csv(fn_store, mode="w", header=True, index=True)
@@ -1331,6 +1471,7 @@ class ETASSimulation:
                     chunksize,
                     info_cols,
                     i_start=i_next,
+                    workers=workers,
                 )
 
         # append rest of chunks to file
@@ -1345,6 +1486,7 @@ class ETASSimulation:
         filter_polygon: bool = True,
         chunksize: int = 100,
         info_cols: list = [],
+        workers: int = None,
     ) -> ForecastCatalog:
         store = pd.DataFrame()
         for chunk in self.simulate(
@@ -1354,6 +1496,7 @@ class ETASSimulation:
             filter_polygon,
             chunksize,
             info_cols,
+            workers=workers,
         ):
             store = pd.concat([store, chunk], ignore_index=False)
         return ForecastCatalog(data=store)
