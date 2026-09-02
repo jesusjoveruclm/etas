@@ -342,7 +342,9 @@ def simulate_background_location(
     return lats, lons
 
 
-def prepare_area_properties(polygon, timewindow_start, timewindow_end):
+def prepare_simulation_domain_properties(
+    polygon, timewindow_start, timewindow_end
+):
     from etas.inversion import polygon_surface, to_days
 
     area = polygon_surface(polygon)
@@ -387,22 +389,23 @@ def generate_background_events(
     grid=False,
     mfd_zones=None,
     zones_from_latlon=None,
-    area_properties=None,
+    simulation_domain_properties=None,
 ):
     theta = parameter_dict2array(parameters)
     theta_without_mu = theta[2:]
 
-    if area_properties is None:
-        area_properties = prepare_area_properties(
+    domain_properties = simulation_domain_properties
+    if domain_properties is None:
+        domain_properties = prepare_simulation_domain_properties(
             polygon, timewindow_start, timewindow_end)
 
-    area = area_properties["area"]
-    timewindow_length = area_properties["timewindow_length"]
-    min_lat = area_properties["min_lat"]
-    min_lon = area_properties["min_lon"]
-    max_lat = area_properties["max_lat"]
-    max_lon = area_properties["max_lon"]
-    rectangle_area = area_properties["rectangle_area"]
+    area = domain_properties["area"]
+    timewindow_length = domain_properties["timewindow_length"]
+    min_lat = domain_properties["min_lat"]
+    min_lon = domain_properties["min_lon"]
+    max_lat = domain_properties["max_lat"]
+    max_lon = domain_properties["max_lon"]
+    rectangle_area = domain_properties["rectangle_area"]
 
     # number of background events
     expected_n_background = (
@@ -760,7 +763,7 @@ def generate_catalog(
     if beta_aftershock is None:
         beta_aftershock = beta_main
 
-    area_properties = prepare_area_properties(
+    domain_properties = prepare_simulation_domain_properties(
         polygon, timewindow_start, timewindow_end)
 
     # generate background events
@@ -778,7 +781,7 @@ def generate_catalog(
         background_lons=background_lons,
         background_probs=background_probs,
         gaussian_scale=gaussian_scale,
-        area_properties=area_properties,
+        simulation_domain_properties=domain_properties,
     )
 
     theta = parameter_dict2array(parameters)
@@ -871,7 +874,7 @@ def simulate_catalog_continuation(
     induced_bsla=None,
     induced_bslo=None,
     n_induced=None,
-    area_properties=None,
+    simulation_domain_properties=None,
 ):
     """
     auxiliary_catalog : pd.DataFrame
@@ -932,7 +935,7 @@ def simulate_catalog_continuation(
         Longitude bin size of induced grid term.
     n_induced : float, optional
         Expected number of induced earthquakes.
-    area_properties : dict, optional
+    simulation_domain_properties : dict, optional
         Polygon area, bounds, rectangle area, and simulation duration prepared
         outside the simulation loop.
     """
@@ -940,8 +943,9 @@ def simulate_catalog_continuation(
     if beta_aftershock is None:
         beta_aftershock = beta_main
 
-    if area_properties is None:
-        area_properties = prepare_area_properties(
+    domain_properties = simulation_domain_properties
+    if domain_properties is None:
+        domain_properties = prepare_simulation_domain_properties(
             polygon, auxiliary_end, simulation_end)
 
     background = generate_background_events(
@@ -962,15 +966,15 @@ def simulate_catalog_continuation(
         grid=bg_grid,
         mfd_zones=mfd_zones,
         zones_from_latlon=zones_from_latlon,
-        area_properties=area_properties,
+        simulation_domain_properties=domain_properties,
     )
     background["evt_id"] = ""
     background["xi_plus_1"] = 1
 
     if induced_lats is not None:
         parameters_induced = parameters.copy()
-        area = area_properties["area"]
-        timewindow_length = area_properties["timewindow_length"]
+        area = domain_properties["area"]
+        timewindow_length = domain_properties["timewindow_length"]
         mu_induced = n_induced / (timewindow_length * area)
         parameters_induced["log10_mu"] = np.log10(mu_induced)
         induced = generate_background_events(
@@ -988,7 +992,7 @@ def simulate_catalog_continuation(
             bsla=induced_bsla,
             bslo=induced_bslo,
             grid=True,
-            area_properties=area_properties,
+            simulation_domain_properties=domain_properties,
         )
         induced["is_background"] = "induced"
         induced["evt_id"] = ""
@@ -1220,7 +1224,7 @@ class ETASSimulation:
         self.forecast_end_date = self.forecast_start_date + dt.timedelta(
             days=forecast_n_days
         )
-        area_properties = prepare_area_properties(
+        domain_properties = prepare_simulation_domain_properties(
             self.polygon, self.forecast_start_date, self.forecast_end_date)
 
         simulation_chunks = []
@@ -1257,7 +1261,7 @@ class ETASSimulation:
                 induced_bsla=self.induced_bsla,
                 induced_bslo=self.induced_bslo,
                 n_induced=self.n_induced,
-                area_properties=area_properties,
+                simulation_domain_properties=domain_properties,
             )
 
             continuation["catalog_id"] = sim_id
