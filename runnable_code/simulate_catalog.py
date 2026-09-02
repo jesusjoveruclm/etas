@@ -18,7 +18,8 @@ if __name__ == '__main__':
 
     region = Polygon(np.load(simulation_config["shape_coords"]))
 
-    # np.random.seed(777)
+    # To reproduce the same catalog, set the random seed and pass the seed=rng to the generate_catalog function. E.g.:
+    # rng = np.random.default_rng(777)
 
     synthetic = generate_catalog(
         polygon=region,

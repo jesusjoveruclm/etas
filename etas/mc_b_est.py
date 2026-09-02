@@ -126,7 +126,10 @@ def empirical_cdf(sample, weights=None):
     return x, y[np.cumsum(y_count) - 1]
 
 
-def ks_test_gr(sample, mc, delta_m, ks_ds=None, n_samples=10000, beta=None):
+def ks_test_gr(sample, mc, delta_m, ks_ds=None, n_samples=10000, beta=None, rng=None):
+    if rng is None:
+        rng = np.random.default_rng()
+
     sample = sample[sample >= mc - delta_m / 2]
     if len(sample) == 0:
         print("no sample")
@@ -145,7 +148,8 @@ def ks_test_gr(sample, mc, delta_m, ks_ds=None, n_samples=10000, beta=None):
             simulate_magnitudes(
                 mc=mc - delta_m / 2,
                 beta=beta,
-                n=n_samples * n_sample) / delta_m) * delta_m
+                n=n_samples * n_sample,
+                rng=rng) / delta_m) * delta_m
 
         x_max = np.max(simulated_all)
         x_fit, y_fit = fitted_cdf_discrete(
@@ -177,7 +181,8 @@ def estimate_mc(sample,
                 stop_when_passed=True,
                 verbose=False,
                 beta=None,
-                n_samples=10000):
+                n_samples=10000,
+                rng=None):
     """
     Estimates mc.
 
@@ -200,7 +205,12 @@ def estimate_mc(sample,
     n_samples : int
         Number of magnitude samples to be generated in p-value
         calculation of KS distance.
+    rng : numpy.random.Generator, optional
+        Random number generator used for reproducible Monte Carlo sampling.
     """
+
+    if rng is None:
+        rng = np.random.default_rng()
 
     ks_ds = []
     ps = []
@@ -209,7 +219,12 @@ def estimate_mc(sample,
         if verbose:
             print('\ntesting mc', mc)
         ks_d, p, _ = ks_test_gr(
-            sample, mc=mc, delta_m=delta_m, n_samples=n_samples, beta=beta)
+            sample,
+            mc=mc,
+            delta_m=delta_m,
+            n_samples=n_samples,
+            beta=beta,
+            rng=rng)
 
         ks_ds.append(ks_d)
         ps.append(p)
